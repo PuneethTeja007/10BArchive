@@ -26,8 +26,11 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' }, contentSecurityPolicy: false }));
 const origins = (process.env.FRONTEND_ORIGIN || '').split(',').map(x => x.trim()).filter(Boolean);
+console.log('CORS allowed origins:', JSON.stringify(origins));
 app.use(cors({ origin(origin, cb) {
   if (!origin || origins.length === 0 || origins.includes(origin)) return cb(null, true);
+  console.error('CORS rejected origin:', JSON.stringify(origin));
+  console.error('CORS allowed origins:', JSON.stringify(origins));
   return cb(new Error('This website origin is not allowed by the backend CORS policy.'));
 }, methods: ['GET','POST','OPTIONS'], allowedHeaders: ['Content-Type','x-admin-password'] }));
 app.use(express.json({ limit: '100kb' }));
