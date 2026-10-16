@@ -25,7 +25,13 @@ if (!OWNER || !TOKEN || !ADMIN_PASSWORD) {
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' }, contentSecurityPolicy: false }));
-const origins = (process.env.FRONTEND_ORIGIN || '').split(',').map(x => x.trim()).filter(Boolean);
+const origins = [
+  ...(process.env.FRONTEND_ORIGIN || '')
+    .split(',')
+    .map(x => x.trim())
+    .filter(Boolean),
+  'https://one0barchive-backend.onrender.com'
+];
 console.log('CORS allowed origins:', JSON.stringify(origins));
 app.use(cors({ origin(origin, cb) {
   if (!origin || origins.length === 0 || origins.includes(origin)) return cb(null, true);
