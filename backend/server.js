@@ -41,7 +41,7 @@ app.use(cors({ origin(origin, cb) {
 }, methods: ['GET','POST','OPTIONS'], allowedHeaders: ['Content-Type','x-admin-password'] }));
 app.use(express.json({ limit: '100kb' }));
 app.use('/api/', rateLimit({ windowMs: 15 * 60 * 1000, limit: 180, standardHeaders: true, legacyHeaders: false }));
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_BYTES, files: 1 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_BYTES, files: 20 } });
 
 function apiPath(repo, path='') { return `${API}/repos/${encodeURIComponent(OWNER)}/${encodeURIComponent(repo)}/contents/${path.split('/').map(encodeURIComponent).join('/')}`; }
 async function gh(url, options={}) {
@@ -147,31 +147,50 @@ app.put('/api/admin/site-content', requireAdmin, async (req,res) => {
 
 
 // Student submissions are stored only in the private pending repository.
-app.post('/api/submissions', upload.single('file'), async (req,res) => {
-  try {
-    if (!OWNER || !TOKEN) return res.status(503).json({error:'The submission service is not configured yet.'});
-    if (!req.file) return res.status(400).json({error:'Choose a file to submit.'});
-    const original = safeName(req.file.originalname);
+app.post('/api/submissions', upload.array('files', 20), async (req,res) => {
+  if (!OWNER || !TOKEN) return res.status(503).json({error:'The submission service is not configured yet.'});
+  const files = Array.isArray(req.files) ? req.files : [];
+  if (!files.length) return res.status(400).json({error:'Choose at least one file to submit.'});
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+  if (totalBytes > MAX_BYTES) return res.status(413).json({error:`All selected files together must be ${MAX_MB} MB or smaller. You selected ${Math.ceil(totalBytes / (1024 * 1024))} MB.`});
+  const destination = String(req.body.destination || '');
+  if (!validDestination(destination)) return res.status(400).json({error:'Choose a valid Math archive destination.'});
+  const studentName = cleanText(req.body.studentName,80);
+  const results = [];
+  for (const file of files) {
+    const original = safeName(file.originalname);
     const ext = original.includes('.') ? original.slice(original.lastIndexOf('.')).toLowerCase() : '';
-    if (!ALLOWED_EXT.has(ext)) return res.status(415).json({error:'This file type is not allowed.'});
-    const destination = String(req.body.destination || '');
-    if (!validDestination(destination)) return res.status(400).json({error:'Choose a valid Math archive destination.'});
+    if (!ALLOWED_EXT.has(ext)) {
+      results.push({file: original, ok:false, error:'This file type is not allowed.'});
+      continue;
+    }
     const id = crypto.randomUUID();
     const filePath = `pending/${id}/${original}`;
     const metadata = {
       id, originalName: original, storedPath: filePath, destination,
-      studentName: cleanText(req.body.studentName,80), size: req.file.size,
-      mimeType: req.file.mimetype, submittedAt: new Date().toISOString(), status:'pending'
+      studentName, size: file.size, mimeType: file.mimetype,
+      submittedAt: new Date().toISOString(), status:'pending'
     };
-    await putFile(PENDING_REPO,filePath,req.file.buffer,`New private submission ${id}`);
     try {
-      await putFile(PENDING_REPO,`pending/${id}/submission.json`,JSON.stringify(metadata,null,2),`Record private submission ${id}`);
+      await putFile(PENDING_REPO,filePath,file.buffer,`New private submission ${id}`);
+      try {
+        await putFile(PENDING_REPO,`pending/${id}/submission.json`,JSON.stringify(metadata,null,2),`Record private submission ${id}`);
+      } catch (e) {
+        try { const uploaded = await getContent(PENDING_REPO,filePath); await deleteFile(PENDING_REPO,filePath,uploaded.sha,`Remove incomplete submission ${id}`); } catch (_) {}
+        throw e;
+      }
+      results.push({file: original, ok:true, id});
     } catch (e) {
-      try { const uploaded = await getContent(PENDING_REPO,filePath); await deleteFile(PENDING_REPO,filePath,uploaded.sha,`Remove incomplete submission ${id}`); } catch (_) {}
-      throw e;
+      console.error('submission error:', original, e.message);
+      results.push({file: original, ok:false, error:'Could not save this file privately. Please try again later.'});
     }
-    res.status(201).json({ok:true, id, message:'Submission is private and awaiting review.'});
-  } catch (e) { console.error('submission error:',e.message); res.status(e.status || 502).json({error:'Could not save the submission privately. Please try again later.'}); }
+  }
+  const succeeded = results.filter(x => x.ok).length;
+  const failed = results.length - succeeded;
+  res.status(failed ? (succeeded ? 207 : 502) : 201).json({
+    ok: failed === 0, submitted:succeeded, failed,
+    results, message: failed ? `${succeeded} file(s) submitted; ${failed} failed.` : `${succeeded} file(s) submitted for approval.`
+  });
 });
 
 // Public listing only reads from the public repository, never the pending repository.
