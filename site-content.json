@@ -1,21 +1,26 @@
 {
   "changelog": [
     {
-      "date": "18 October 2026",
+      "date": "18 October 2026 ( at 6:00 pm)",
       "title": "10BArchive (Prototype 4)",
       "description": "The class resource archive has updated to mandate name.New books will be entered soon. Planned Uploads: RSA Book, Oswaal Book, Board papers, Vydehi and Deens Papers, Answer sheets, Board Paper Chapters and Weightage. More updates soon.Encouraging Contributors to contribute as much as possible."
+    },
+    {
+      "date": "18 October 2026 ( at 11:04 pm)",
+      "title": "10BArchive (Prototype 6)",
+      "description": "The class resource archive has updated to allow multiple file downloads(not more than 25 files, or 90 mb per batch), Updated Board paper resources to include 2025-26 Board papers. Planned Uploads: RSA Book, Oswaal Book, Other Board papers, Vydehi and Deens Papers, Answer sheets, Board Paper Chapters and Weightage. More updates soon.Encouraging Contributors to contribute as much as possible."
     }
   ],
   "contributors": [
     {
       "name": "Puneeth",
       "role": "Active Moderator + Contributer",
-      "description": "Ncert resources, Sample Paper"
+      "description": "Ncert resources, Sample Papers and Board papers. Still updating."
     },
     {
       "name": "Unknown (contributed on 17 Oct)",
       "role": "Passive Contributed",
-      "description": "3 Ncert Chapters"
+      "description": "3 Ncert Chapters, unknown person"
     }
   ]
 }
