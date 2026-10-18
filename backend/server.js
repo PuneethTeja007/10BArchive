@@ -72,8 +72,10 @@ function requireAdmin(req,res,next) {
   if (a.length !== b.length || !crypto.timingSafeEqual(a,b) || !ADMIN_PASSWORD) return res.status(401).json({error:'Incorrect admin password.'});
   next();
 }
-async function putFile(repo, path, content, message) {
-  return gh(apiPath(repo,path), {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message, content:Buffer.isBuffer(content)?content.toString('base64'):Buffer.from(String(content)).toString('base64'), branch:BRANCH})});
+async function putFile(repo, path, content, message, sha) {
+  const payload = {message, content:Buffer.isBuffer(content)?content.toString('base64'):Buffer.from(String(content)).toString('base64'), branch:BRANCH};
+  if (sha) payload.sha = sha;
+  return gh(apiPath(repo,path), {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
 }
 async function getContent(repo,path) { return gh(apiPath(repo,path)); }
 async function getFileBytes(repo, contentRecord) {
@@ -94,6 +96,55 @@ async function tree(repo) {
 function isSafeRepoPath(path) { return typeof path === 'string' && !path.startsWith('/') && !path.split('/').includes('..'); }
 
 app.get('/api/health', (_req,res) => res.json({ok:true, service:'10BArchive backend'}));
+
+const SITE_CONTENT_PATH = 'site-content.json';
+const DEFAULT_SITE_CONTENT = {
+  changelog: [{ date: '18 October 2026', title: '10BArchive is live', description: 'The class resource archive is being built and improved.' }],
+  contributors: []
+};
+function normalizeSiteContent(input) {
+  const rows = (value, fields, limits) => (Array.isArray(value) ? value : []).slice(0, 100).map(item => {
+    const out = {};
+    for (const field of fields) out[field] = cleanText(item && item[field], limits[field]);
+    return out;
+  }).filter(item => fields.some(field => item[field]));
+  return {
+    changelog: rows(input && input.changelog, ['date','title','description'], {date:40,title:120,description:600}),
+    contributors: rows(input && input.contributors, ['name','role','description'], {name:100,role:100,description:400})
+  };
+}
+async function readSiteContent() {
+  try {
+    const record = await getContent(PUBLIC_REPO, SITE_CONTENT_PATH);
+    return normalizeSiteContent(JSON.parse(Buffer.from(record.content.replace(/\n/g,''),'base64').toString('utf8')));
+  } catch (e) {
+    if (e.status === 404) return DEFAULT_SITE_CONTENT;
+    throw e;
+  }
+}
+app.get('/api/site-content', async (_req,res) => {
+  try { res.set('Cache-Control','no-store'); res.json(await readSiteContent()); }
+  catch (e) { console.error('site content read error:',e.message); res.status(502).json({error:'Could not load homepage details.'}); }
+});
+app.get('/api/admin/site-content', requireAdmin, async (_req,res) => {
+  try { res.set('Cache-Control','no-store'); res.json(await readSiteContent()); }
+  catch (e) { console.error('admin site content read error:',e.message); res.status(502).json({error:'Could not load homepage details from GitHub.'}); }
+});
+app.put('/api/admin/site-content', requireAdmin, async (req,res) => {
+  try {
+    if (!OWNER || !TOKEN) return res.status(503).json({error:'GitHub storage is not configured.'});
+    const content = normalizeSiteContent(req.body || {});
+    let sha;
+    try { sha = (await getContent(PUBLIC_REPO, SITE_CONTENT_PATH)).sha; }
+    catch (e) { if (e.status !== 404) throw e; }
+    await putFile(PUBLIC_REPO, SITE_CONTENT_PATH, JSON.stringify(content,null,2), 'Update 10BArchive homepage content', sha);
+    res.json({ok:true, content});
+  } catch (e) {
+    console.error('site content save error:',e.message);
+    res.status(e.status || 502).json({error:'Could not save homepage details. Check public repository write permissions.'});
+  }
+});
+
 
 // Student submissions are stored only in the private pending repository.
 app.post('/api/submissions', upload.single('file'), async (req,res) => {
@@ -168,7 +219,12 @@ app.get('/api/admin/submissions', requireAdmin, async (_req,res) => {
     }
     records.sort((a,b) => String(b.submittedAt).localeCompare(String(a.submittedAt)));
     res.json({submissions:records});
-  } catch (e) { console.error('admin list error:',e.message); res.status(502).json({error:'Could not load pending submissions. Check the private repository and token permissions.'}); }
+  } catch (e) {
+    // GitHub returns 409 when the pending repository exists but has no commit/tree yet.
+    if (e.status === 409) return res.json({submissions:[]});
+    console.error('admin list error:',e.message);
+    res.status(502).json({error:'Could not load pending submissions. Check the private repository and token permissions.'});
+  }
 });
 app.post('/api/admin/submissions/:id/approve', requireAdmin, async (req,res) => {
   try {
