@@ -16,6 +16,7 @@ const TOKEN = process.env.GITHUB_TOKEN;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const MAX_MB = Math.min(90, Math.max(1, Number(process.env.MAX_UPLOAD_MB || 90)));
 const MAX_BYTES = MAX_MB * 1024 * 1024;
+const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const API = 'https://api.github.com';
 const ALLOWED_EXT = new Set(['.pdf','.doc','.docx','.ppt','.pptx','.xls','.xlsx','.jpg','.jpeg','.png']);
 
@@ -38,10 +39,10 @@ app.use(cors({ origin(origin, cb) {
   console.error('CORS rejected origin:', JSON.stringify(origin));
   console.error('CORS allowed origins:', JSON.stringify(origins));
   return cb(new Error('This website origin is not allowed by the backend CORS policy.'));
-}, methods: ['GET','POST','OPTIONS'], allowedHeaders: ['Content-Type','x-admin-password'] }));
+}, methods: ['GET','POST','PUT','OPTIONS'], allowedHeaders: ['Content-Type','x-admin-password'] }));
 app.use(express.json({ limit: '100kb' }));
 app.use('/api/', rateLimit({ windowMs: 15 * 60 * 1000, limit: 180, standardHeaders: true, legacyHeaders: false }));
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_BYTES, files: 20 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 20 } });
 
 function apiPath(repo, path='') { return `${API}/repos/${encodeURIComponent(OWNER)}/${encodeURIComponent(repo)}/contents/${path.split('/').map(encodeURIComponent).join('/')}`; }
 async function gh(url, options={}) {
@@ -148,51 +149,52 @@ app.put('/api/admin/site-content', requireAdmin, async (req,res) => {
 
 // Student submissions are stored only in the private pending repository.
 app.post('/api/submissions', upload.array('files', 20), async (req,res) => {
-  if (!OWNER || !TOKEN) return res.status(503).json({error:'The submission service is not configured yet.'});
-  const files = Array.isArray(req.files) ? req.files : [];
-  if (!files.length) return res.status(400).json({error:'Choose at least one file to submit.'});
-  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
-  if (totalBytes > MAX_BYTES) return res.status(413).json({error:`All selected files together must be ${MAX_MB} MB or smaller. You selected ${Math.ceil(totalBytes / (1024 * 1024))} MB.`});
-  const destination = String(req.body.destination || '');
-  if (!validDestination(destination)) return res.status(400).json({error:'Choose a valid Math archive destination.'});
-  const studentName = cleanText(req.body.studentName,80);
-  const results = [];
-  for (const file of files) {
-    const original = safeName(file.originalname);
-    const ext = original.includes('.') ? original.slice(original.lastIndexOf('.')).toLowerCase() : '';
-    if (!ALLOWED_EXT.has(ext)) {
-      results.push({file: original, ok:false, error:'This file type is not allowed.'});
-      continue;
-    }
-    const id = crypto.randomUUID();
-    const filePath = `pending/${id}/${original}`;
-    const metadata = {
-      id, originalName: original, storedPath: filePath, destination,
-      studentName, size: file.size, mimeType: file.mimetype,
-      submittedAt: new Date().toISOString(), status:'pending'
-    };
-    try {
-      await putFile(PENDING_REPO,filePath,file.buffer,`New private submission ${id}`);
-      try {
-        await putFile(PENDING_REPO,`pending/${id}/submission.json`,JSON.stringify(metadata,null,2),`Record private submission ${id}`);
-      } catch (e) {
-        try { const uploaded = await getContent(PENDING_REPO,filePath); await deleteFile(PENDING_REPO,filePath,uploaded.sha,`Remove incomplete submission ${id}`); } catch (_) {}
-        throw e;
+  try {
+    if (!OWNER || !TOKEN) return res.status(503).json({error:'The submission service is not configured yet.'});
+    const files = req.files || [];
+    if (!files.length) return res.status(400).json({error:'Choose at least one file.'});
+    const totalBytes = files.reduce((sum,file) => sum + file.size, 0);
+    if (totalBytes > MAX_BYTES) return res.status(413).json({error:`All files together must be ${MAX_MB} MB or smaller.`});
+    const destination = String(req.body.destination || '');
+    if (!validDestination(destination)) return res.status(400).json({error:'Choose a valid Math archive destination.'});
+    const studentName = cleanText(req.body.studentName,80);
+    const results = [];
+    for (const file of files) {
+      const original = safeName(file.originalname);
+      const ext = original.includes('.') ? original.slice(original.lastIndexOf('.')).toLowerCase() : '';
+      if (!ALLOWED_EXT.has(ext)) {
+        results.push({file:original,ok:false,error:'This file type is not allowed.'});
+        continue;
       }
-      results.push({file: original, ok:true, id});
-    } catch (e) {
-      console.error('submission error:', original, e.message);
-      results.push({file: original, ok:false, error:'Could not save this file privately. Please try again later.'});
+      const id = crypto.randomUUID();
+      const filePath = `pending/${id}/${original}`;
+      const metadata = {
+        id, originalName: original, storedPath: filePath, destination,
+        studentName, size: file.size, mimeType: file.mimetype,
+        submittedAt: new Date().toISOString(), status:'pending'
+      };
+      try {
+        await putFile(PENDING_REPO,filePath,file.buffer,`New private submission ${id}`);
+        try {
+          await putFile(PENDING_REPO,`pending/${id}/submission.json`,JSON.stringify(metadata,null,2),`Record private submission ${id}`);
+        } catch (e) {
+          try { const uploaded = await getContent(PENDING_REPO,filePath); await deleteFile(PENDING_REPO,filePath,uploaded.sha,`Remove incomplete submission ${id}`); } catch (_) {}
+          throw e;
+        }
+        results.push({file:original,ok:true,id,message:'Awaiting review.'});
+      } catch (e) {
+        console.error('submission file error:',original,e.message);
+        results.push({file:original,ok:false,error:'Could not save this file privately.'});
+      }
     }
+    const submitted = results.filter(x=>x.ok).length;
+    const failed = results.length-submitted;
+    res.status(failed ? (submitted ? 207 : 502) : 201).json({ok:failed===0,submitted,failed,results,message:failed ? `${submitted} file(s) submitted; ${failed} failed.` : `${submitted} file(s) submitted for review.`});
+  } catch (e) {
+    console.error('submission error:',e.message);
+    res.status(e.status || 502).json({error:'Could not save the submissions privately. Please try again later.'});
   }
-  const succeeded = results.filter(x => x.ok).length;
-  const failed = results.length - succeeded;
-  res.status(failed ? (succeeded ? 207 : 502) : 201).json({
-    ok: failed === 0, submitted:succeeded, failed,
-    results, message: failed ? `${succeeded} file(s) submitted; ${failed} failed.` : `${succeeded} file(s) submitted for approval.`
-  });
 });
-
 // Public listing only reads from the public repository, never the pending repository.
 app.get('/api/files', async (req,res) => {
   try {
@@ -282,7 +284,7 @@ app.post('/api/admin/submissions/:id/reject', requireAdmin, async (req,res) => {
 
 app.get('/admin', (_req,res) => res.type('html').sendFile(require('path').join(__dirname,'admin.html')));
 app.use((err,req,res,next) => {
-  if (err instanceof multer.MulterError) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({error:err.code === 'LIMIT_FILE_SIZE' ? `Files must be ${MAX_MB} MB or smaller.` : 'Upload was rejected.'});
+  if (err instanceof multer.MulterError) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({error:err.code === 'LIMIT_FILE_SIZE' ? 'Each file must be 25 MB or smaller.' : err.code === 'LIMIT_FILE_COUNT' ? 'Choose no more than 20 files.' : 'Upload was rejected.'});
   if (err) { console.error('request error:',err.message); return res.status(400).json({error:'Request could not be processed.'}); }
   next();
 });
