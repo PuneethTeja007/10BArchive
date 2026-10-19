@@ -39,10 +39,10 @@ app.use(cors({ origin(origin, cb) {
   console.error('CORS rejected origin:', JSON.stringify(origin));
   console.error('CORS allowed origins:', JSON.stringify(origins));
   return cb(new Error('This website origin is not allowed by the backend CORS policy.'));
-}, methods: ['GET','POST','PUT','OPTIONS'], allowedHeaders: ['Content-Type','x-admin-password'] }));
+}, methods: ['GET','POST','PUT','DELETE','OPTIONS'], allowedHeaders: ['Content-Type','x-admin-password'] }));
 app.use(express.json({ limit: '100kb' }));
 app.use('/api/', rateLimit({ windowMs: 15 * 60 * 1000, limit: 180, standardHeaders: true, legacyHeaders: false }));
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 20 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 35 } });
 
 function apiPath(repo, path='') { return `${API}/repos/${encodeURIComponent(OWNER)}/${encodeURIComponent(repo)}/contents/${path.split('/').map(encodeURIComponent).join('/')}`; }
 async function gh(url, options={}) {
@@ -148,7 +148,7 @@ app.put('/api/admin/site-content', requireAdmin, async (req,res) => {
 
 
 // Student submissions are stored only in the private pending repository.
-app.post('/api/submissions', upload.array('files', 20), async (req,res) => {
+app.post('/api/submissions', upload.array('files', 35), async (req,res) => {
   try {
     if (!OWNER || !TOKEN) return res.status(503).json({error:'The submission service is not configured yet.'});
     const files = req.files || [];
@@ -317,7 +317,7 @@ app.post('/api/admin/submissions/:id/reject', requireAdmin, async (req,res) => {
 
 app.get('/admin', (_req,res) => res.type('html').sendFile(require('path').join(__dirname,'admin.html')));
 app.use((err,req,res,next) => {
-  if (err instanceof multer.MulterError) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({error:err.code === 'LIMIT_FILE_SIZE' ? 'Each file must be 25 MB or smaller.' : err.code === 'LIMIT_FILE_COUNT' ? 'Choose no more than 20 files.' : 'Upload was rejected.'});
+  if (err instanceof multer.MulterError) return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({error:err.code === 'LIMIT_FILE_SIZE' ? 'Each file must be 25 MB or smaller.' : err.code === 'LIMIT_FILE_COUNT' ? 'Choose no more than 35 files.' : 'Upload was rejected.'});
   if (err) { console.error('request error:',err.message); return res.status(400).json({error:'Request could not be processed.'}); }
   next();
 });
