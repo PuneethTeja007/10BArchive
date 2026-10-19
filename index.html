@@ -40,6 +40,14 @@ a{color:inherit;text-decoration:none}button,input,select{font:inherit}button{cur
     background-color: #1769ff;
   }
 }
+
+/* Long labels: scroll only when the full text does not fit. */
+.scrolling-label{display:block;max-width:100%;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:clip}
+.scrolling-label-inner{display:inline-block;min-width:100%;width:max-content;will-change:transform}
+.scrolling-label.is-overflow .scrolling-label-inner{animation:longLabelScroll var(--scroll-duration,6s) ease-in-out infinite alternate}
+@keyframes longLabelScroll{0%,8%{transform:translateX(0)}92%,100%{transform:translateX(var(--scroll-distance,0px))}}
+@media(prefers-reduced-motion:reduce){.scrolling-label.is-overflow .scrolling-label-inner{animation:none;transform:translateX(0)}}
+
 </style>
 </head>
 <body>
@@ -115,7 +123,7 @@ function uploadPage(){return crumbs("/Math/Upload")+pageHead("Submit a Resource"
 '<optgroup label="Exam papers and solutions"><option>Math/ExamPapersAndSolutions/Sample Papers/Session 2022-23</option><option>Math/ExamPapersAndSolutions/Sample Papers/Session 2023-24</option><option>Math/ExamPapersAndSolutions/Sample Papers/Session 2024-25</option><option>Math/ExamPapersAndSolutions/Sample Papers/Session 2025-26</option><option>Math/ExamPapersAndSolutions/Sample Papers/Session 2026-27</option><option>Math/ExamPapersAndSolutions/Board Papers/Session 2022-23</option><option>Math/ExamPapersAndSolutions/Board Papers/Session 2023-24</option><option>Math/ExamPapersAndSolutions/Board Papers/Session 2024-25</option><option>Math/ExamPapersAndSolutions/Board Papers/Session 2025-26</option><option>Math/ExamPapersAndSolutions/School Papers/Deens Papers</option><option>Math/ExamPapersAndSolutions/School Papers/Vydehi Papers</option></optgroup>'+
 '<optgroup label="Books"><option>Math/Books/NCERT Books</option><option>Math/Books/Owsaal</option><option>Math/Books/RSAgarwaal</option><option>Math/Books/EduCart Books</option></optgroup>'+
 '<optgroup label="Other Math resources"><option>Math/AnswersSolutions</option><option>Math/VydehiSchoolPaperBreakdown</option><option>Math/ThisYearsBoardChapterBreakdown</option></optgroup></select></div>'+
-'<div class="field"><label for="upload-file">Select files</label><div class="file-drop"><div style="font-size:28px;margin-bottom:8px">↑</div><strong>Choose multiple files from your device</strong><p class="muted" style="margin:5px 0 14px;font-size:12px">PDF, DOC/DOCX, PPT/PPTX, XLS/XLSX, JPG or PNG · Up to 20 files · Max 25 MB each · 90 MB total per batch</p><input id="upload-file" type="file" multiple required accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.jpg,.jpeg,.png" onchange="showSelectedFiles()"><div class="hint" id="selected-files">No files selected.</div></div></div>'+
+'<div class="field"><label for="upload-file">Select files</label><div class="file-drop"><div style="font-size:28px;margin-bottom:8px">↑</div><strong>Choose multiple files from your device</strong><p class="muted" style="margin:5px 0 14px;font-size:12px">PDF, DOC/DOCX, PPT/PPTX, XLS/XLSX, JPG or PNG · Up to 35 files · Max 25 MB each · 90 MB total per batch</p><input id="upload-file" type="file" multiple required accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.jpg,.jpeg,.png" onchange="showSelectedFiles()"><div class="hint" id="selected-files">No files selected.</div></div></div>'+
 '<button class="btn" id="upload-submit" type="submit">Submit for approval</button><div class="hint">Submitting does not publish the file. The archive owner reviews it first.</div></form></div>'; }
 
 function specialPage(path){let title,desc;if(path.includes("AnswersSolutions")){title="Answers / Solutions";desc="Answer keys and worked solutions will be organized here.";}else if(path.includes("VydehiSchoolPaperBreakdown")){title="Vydehi School Paper Breakdown";desc="Chapter-wise breakdowns of Vydehi school papers will appear here.";}else{title="This Year's Board Chapter Breakdown";desc="Chapter-wise board paper trends and breakdowns will appear here.";}return crumbs(path)+pageHead(title,desc)+'<div class="panel">'+emptyState("This section is ready for the resources you provide.")+'</div>';}
@@ -148,7 +156,7 @@ async function submitUpload(e){
  if(!API_BASE){msg.innerHTML='<div class="notice error">Submissions are not enabled yet. The backend must be deployed first.</div>';return;}
  if(!name){msg.innerHTML='<div class="notice error">Please enter your name.</div>';document.getElementById('student-name').focus();return;}
  if(!files.length){msg.innerHTML='<div class="notice error">Choose at least one file.</div>';return;}
- if(files.length>20){msg.innerHTML='<div class="notice error">Please select no more than 20 files at once.</div>';return;}
+ if(files.length>35){msg.innerHTML='<div class="notice error">Please select no more than 35 files at once.</div>';return;}
  const tooLarge=files.find(f=>f.size>25*1024*1024);
  if(tooLarge){msg.innerHTML='<div class="notice error">“'+esc(tooLarge.name)+'” is larger than 25 MB.</div>';return;}
  const total=files.reduce((sum,f)=>sum+f.size,0);
@@ -177,6 +185,31 @@ async function refreshFiles(){const list=document.getElementById("file-list");if
 function showFiles(files){const list=document.getElementById("file-list");if(!list)return;if(!files.length){list.innerHTML=emptyState();return;}list.innerHTML=files.map(f=>'<div class="file-row"><span class="resource-icon">PDF</span><div class="meta"><strong>'+esc(f.name)+'</strong><small>'+esc(f.destination||"Math")+" · "+(f.size?Math.max(1,Math.round(f.size/1024))+" KB":"")+'</small></div><button class="btn secondary" onclick="previewFile(\''+esc(f.id)+'\',\''+esc(f.name)+'\')">Preview</button><a class="btn" href="'+apiUrl("/api/files/"+encodeURIComponent(f.id)+"/download")+'" target="_blank" rel="noopener">Download</a></div>').join("");}
 function filterFiles(){const q=(document.getElementById("file-search")?.value||"").toLowerCase();showFiles(cachedFiles.filter(f=>f.name.toLowerCase().includes(q)));}
 function previewFile(id,name){const old=document.getElementById("pdf-viewer-wrap");if(old)old.remove();const wrap=document.createElement("div");wrap.id="pdf-viewer-wrap";wrap.className="panel";wrap.style.marginTop="18px";wrap.innerHTML='<div class="section-head"><div><h1 style="font-size:23px">'+esc(name)+'</h1><p>Document preview</p></div><button class="btn secondary" onclick="document.getElementById(\'pdf-viewer-wrap\').remove()">Close</button></div><iframe class="viewer" title="PDF preview" src="'+apiUrl("/api/files/"+encodeURIComponent(id)+"/preview")+'"></iframe><p class="hint">If this file type cannot be previewed in your browser, use Download.</p>';document.querySelector(".panel").appendChild(wrap);wrap.scrollIntoView({behavior:"smooth",block:"start"});}
+
+function setupLongLabelScrolling(root=document){
+ const selector='.resource-copy strong,.folder span:nth-child(2),.file-row strong,.info-entry strong,.subject-name,.acc-label strong,.crumbs button,.section-head h1';
+ const candidates=[];
+ if(root.matches&&root.matches(selector))candidates.push(root);
+ if(root.querySelectorAll)candidates.push(...root.querySelectorAll(selector));
+ for(const el of candidates){
+  if(el.dataset.scrollPrepared==='1')continue;
+  const full=el.textContent.trim();if(!full)continue;
+  el.dataset.scrollPrepared='1';el.classList.add('scrolling-label');el.title=full;
+  el.innerHTML='<span class="scrolling-label-inner">'+esc(full)+'</span>';
+ }
+ const all=[];if(root.matches&&root.matches('.scrolling-label'))all.push(root);if(root.querySelectorAll)all.push(...root.querySelectorAll('.scrolling-label'));
+ for(const el of all){
+  const inner=el.querySelector('.scrolling-label-inner');if(!inner)continue;
+  el.classList.remove('is-overflow');el.style.removeProperty('--scroll-distance');el.style.removeProperty('--scroll-duration');
+  const distance=Math.ceil(inner.scrollWidth-el.clientWidth);
+  if(distance>4){el.classList.add('is-overflow');el.style.setProperty('--scroll-distance',(-distance)+'px');el.style.setProperty('--scroll-duration',Math.max(4,Math.min(14,distance/22))+'s');}
+ }
+}
+const longLabelObserver=new MutationObserver(records=>{for(const record of records){for(const node of record.addedNodes){if(node.nodeType===1)setupLongLabelScrolling(node);}}});
+longLabelObserver.observe(document.body,{childList:true,subtree:true});
+window.addEventListener('resize',()=>setupLongLabelScrolling(document));
+setupLongLabelScrolling(document);
+
 window.addEventListener("hashchange",render);render();
 </script>
 </body></html>
