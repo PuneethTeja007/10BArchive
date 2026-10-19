@@ -230,6 +230,39 @@ app.get('/api/files/:id/download', async (req,res) => {
   } catch (e) { res.status(502).json({error:'Could not retrieve this file.'}); }
 });
 
+// Admin-only manager for files already published in the public archive.
+app.get('/api/admin/files', requireAdmin, async (_req,res) => {
+  try {
+    const entries = await tree(PUBLIC_REPO);
+    const files = entries
+      .filter(x => x.type === 'blob' && x.path.startsWith('Math/') && isSafeRepoPath(x.path))
+      .map(x => ({ path: x.path, size: x.size || 0, sha: x.sha }))
+      .sort((a,b) => a.path.localeCompare(b.path));
+    res.json({files});
+  } catch (e) {
+    if (e.status === 409) return res.json({files:[]});
+    console.error('admin public file list error:', e.message);
+    res.status(502).json({error:'Could not load published files from GitHub.'});
+  }
+});
+app.delete('/api/admin/files', requireAdmin, async (req,res) => {
+  try {
+    const path = String(req.body && req.body.path || '');
+    // Limit deletion to published learning resources; never allow deleting site code or metadata here.
+    if (!isSafeRepoPath(path) || !path.startsWith('Math/') || path === 'Math/' || path.length > 500) {
+      return res.status(400).json({error:'Invalid resource path. Only files inside Math/ can be deleted here.'});
+    }
+    const entries = await tree(PUBLIC_REPO);
+    const entry = entries.find(x => x.type === 'blob' && x.path === path);
+    if (!entry) return res.status(404).json({error:'Published file not found. Refresh the list and try again.'});
+    await deleteFile(PUBLIC_REPO, path, entry.sha, `Delete published resource ${path}`);
+    res.json({ok:true, deletedPath:path});
+  } catch (e) {
+    console.error('admin public file delete error:', e.message);
+    res.status(502).json({error:'Could not delete the published file. Check GitHub token permissions and try again.'});
+  }
+});
+
 app.get('/api/admin/submissions', requireAdmin, async (_req,res) => {
   try {
     const entries = await tree(PENDING_REPO);
